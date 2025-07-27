@@ -2,8 +2,8 @@ import os
 import json
 import datetime
 import logging
+import requests
 from flask import Flask, request, jsonify
-import telnyx
 import gspread
 from google.oauth2 import service_account
 
@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Initialize Telnyx
-telnyx.api_key = os.environ.get('TELNYX_API_KEY')
+# Telnyx configuration
+TELNYX_API_KEY = os.environ.get('TELNYX_API_KEY')
+TELNYX_API_URL = "https://api.telnyx.com/v2"
 
 # Initialize Google Sheets
 GOOGLE_CREDS = os.environ.get('GOOGLE_SHEETS_CREDENTIALS')
@@ -35,7 +36,25 @@ if GOOGLE_CREDS and SPREADSHEET_ID:
 # Store active calls
 active_calls = {}
 
-def log_to_sheet(data):
+def telnyx_api_request(method, endpoint, data=None):
+    """Make a request to Telnyx API"""
+    headers = {
+        'Authorization': f'Bearer {TELNYX_API_KEY}',
+        'Content-Type': 'application/json'
+    }
+    url = f"{TELNYX_API_URL}{endpoint}"
+    
+    try:
+        if method == 'POST':
+            response = requests.post(url, headers=headers, json=data)
+        elif method == 'GET':
+            response = requests.get(url, headers=headers)
+        
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logger.error(f"Telnyx API error: {e}")
+        return None
     """Log call data to Google Sheets"""
     if not sheets_client or not SPREADSHEET_ID:
         logger.warning("Google Sheets not configured")
@@ -120,9 +139,15 @@ def handle_incoming_call(call_data):
     
     # Answer the call
     try:
-        call = telnyx.Call.retrieve(call_id)
-        call.answer()
-        logger.info(f"Answered call {call_id}")
+        answer_data = {
+            'command_id': str(call_id),
+            'webhook_url': f'https://flask-production-2806.up.railway.app/webhooks/telnyx'
+        }
+        result = telnyx_api_request('POST', f'/calls/{call_id}/actions/answer', answer_data)
+        if result:
+            logger.info(f"Answered call {call_id}")
+        else:
+            logger.error(f"Failed to answer call {call_id}")
     except Exception as e:
         logger.error(f"Failed to answer call: {e}")
     
@@ -137,20 +162,22 @@ def handle_call_answered(call_data):
         active_calls[call_id]['answered_time'] = datetime.datetime.utcnow()
     
     try:
-        call = telnyx.Call.retrieve(call_id)
-        
         # Start recording
-        call.record_start(
-            format='mp3',
-            channels='single'
-        )
+        record_data = {
+            'command_id': str(call_id),
+            'format': 'mp3',
+            'channels': 'single'
+        }
+        telnyx_api_request('POST', f'/calls/{call_id}/actions/record_start', record_data)
         
         # Play greeting
-        call.speak(
-            payload="Hello, you've reached Anthony Barragan. Please state your name and reason for calling, and I'll get back to you shortly.",
-            voice="female",
-            language="en-US"
-        )
+        speak_data = {
+            'command_id': str(call_id),
+            'payload': "Hello, you've reached Anthony Barragan. Please state your name and reason for calling, and I'll get back to you shortly.",
+            'voice': 'female',
+            'language': 'en-US'
+        }
+        telnyx_api_request('POST', f'/calls/{call_id}/actions/speak', speak_data)
         
         # Wait a moment then end call
         # For MVP, let's just record for 30 seconds then hangup
@@ -159,13 +186,16 @@ def handle_call_answered(call_data):
             import time
             time.sleep(30)  # Record for 30 seconds
             try:
-                call_obj = telnyx.Call.retrieve(call_id)
-                call_obj.speak(
-                    payload="Thank you for your call. I'll review your message and get back to you.",
-                    voice="female"
-                )
+                speak_end = {
+                    'command_id': str(call_id),
+                    'payload': "Thank you for your call. I'll review your message and get back to you.",
+                    'voice': 'female'
+                }
+                telnyx_api_request('POST', f'/calls/{call_id}/actions/speak', speak_end)
                 time.sleep(5)
-                call_obj.hangup()
+                
+                hangup_data = {'command_id': str(call_id)}
+                telnyx_api_request('POST', f'/calls/{call_id}/actions/hangup', hangup_data)
             except Exception as e:
                 logger.error(f"Error ending call: {e}")
         
