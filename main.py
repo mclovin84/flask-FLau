@@ -3,6 +3,8 @@ import json
 import datetime
 import logging
 import requests
+import threading
+import time
 from flask import Flask, request, jsonify
 import gspread
 from google.oauth2 import service_account
@@ -55,6 +57,8 @@ def telnyx_api_request(method, endpoint, data=None):
     except Exception as e:
         logger.error(f"Telnyx API error: {e}")
         return None
+
+def log_to_sheet(data):
     """Log call data to Google Sheets"""
     if not sheets_client or not SPREADSHEET_ID:
         logger.warning("Google Sheets not configured")
@@ -181,9 +185,7 @@ def handle_call_answered(call_data):
         
         # Wait a moment then end call
         # For MVP, let's just record for 30 seconds then hangup
-        import threading
         def end_call():
-            import time
             time.sleep(30)  # Record for 30 seconds
             try:
                 speak_end = {
