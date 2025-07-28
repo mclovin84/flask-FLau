@@ -107,12 +107,16 @@ def handle_telnyx_webhook():
         logger.info(f"Call data: {json.dumps(call_data, indent=2)}")
         
         if event_type == 'call.initiated':
+            logger.info("Handling incoming call...")
             return handle_incoming_call(call_data)
         elif event_type == 'call.answered':
+            logger.info("Handling call answered...")
             return handle_call_answered(call_data)
         elif event_type == 'call.hangup':
+            logger.info("Handling call hangup...")
             return handle_call_hangup(call_data)
         elif event_type == 'call.recording.saved':
+            logger.info("Handling recording saved...")
             return handle_recording_saved(call_data)
         else:
             logger.info(f"Unhandled event type: {event_type}")
@@ -166,47 +170,75 @@ def handle_call_answered(call_data):
     """Handle call answered event"""
     call_id = call_data.get('call_control_id')
     
+    logger.info(f"Handling call answered for call_id: {call_id}")
+    
     if call_id in active_calls:
         active_calls[call_id]['status'] = 'answered'
         active_calls[call_id]['answered_time'] = datetime.datetime.utcnow()
+        logger.info(f"Updated active call status for {call_id}")
+    else:
+        logger.warning(f"Call {call_id} not found in active_calls")
     
     try:
         # Start recording
+        logger.info(f"Starting recording for call {call_id}")
         record_data = {
             'command_id': str(call_id),
             'format': 'mp3',
             'channels': 'single'
         }
-        telnyx_api_request('POST', f'/calls/{call_id}/actions/record_start', record_data)
+        record_result = telnyx_api_request('POST', f'/calls/{call_id}/actions/record_start', record_data)
+        if record_result:
+            logger.info(f"Recording started successfully for call {call_id}")
+        else:
+            logger.error(f"Failed to start recording for call {call_id}")
         
         # Play greeting
+        logger.info(f"Playing greeting for call {call_id}")
         speak_data = {
             'command_id': str(call_id),
             'payload': "Hello, you've reached Anthony Barragan. Please state your name and reason for calling, and I'll get back to you shortly.",
             'voice': 'female',
             'language': 'en-US'
         }
-        telnyx_api_request('POST', f'/calls/{call_id}/actions/speak', speak_data)
+        speak_result = telnyx_api_request('POST', f'/calls/{call_id}/actions/speak', speak_data)
+        if speak_result:
+            logger.info(f"Greeting played successfully for call {call_id}")
+        else:
+            logger.error(f"Failed to play greeting for call {call_id}")
         
         # Wait a moment then end call
         # For MVP, let's just record for 30 seconds then hangup
         def end_call():
+            logger.info(f"Starting end_call thread for call {call_id}")
             time.sleep(30)  # Record for 30 seconds
             try:
+                logger.info(f"Playing goodbye message for call {call_id}")
                 speak_end = {
                     'command_id': str(call_id),
                     'payload': "Thank you for your call. I'll review your message and get back to you.",
                     'voice': 'female'
                 }
-                telnyx_api_request('POST', f'/calls/{call_id}/actions/speak', speak_end)
+                goodbye_result = telnyx_api_request('POST', f'/calls/{call_id}/actions/speak', speak_end)
+                if goodbye_result:
+                    logger.info(f"Goodbye message played successfully for call {call_id}")
+                else:
+                    logger.error(f"Failed to play goodbye message for call {call_id}")
+                
                 time.sleep(5)
                 
+                logger.info(f"Hanging up call {call_id}")
                 hangup_data = {'command_id': str(call_id)}
-                telnyx_api_request('POST', f'/calls/{call_id}/actions/hangup', hangup_data)
+                hangup_result = telnyx_api_request('POST', f'/calls/{call_id}/actions/hangup', hangup_data)
+                if hangup_result:
+                    logger.info(f"Call {call_id} hung up successfully")
+                else:
+                    logger.error(f"Failed to hang up call {call_id}")
             except Exception as e:
                 logger.error(f"Error ending call: {e}")
         
         threading.Thread(target=end_call, daemon=True).start()
+        logger.info(f"End call thread started for call {call_id}")
         
     except Exception as e:
         logger.error(f"Failed to handle answered call: {e}")
