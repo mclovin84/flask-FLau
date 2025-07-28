@@ -90,9 +90,14 @@ def index():
         'phone': '+1 480 786 8280'
     })
 
-@app.route('/webhooks/telnyx', methods=['POST'])
+@app.route('/webhooks/telnyx', methods=['POST', 'GET'])
 def handle_telnyx_webhook():
     """Main webhook handler for all Telnyx events"""
+    if request.method == 'GET':
+        return jsonify({
+            'status': 'webhook endpoint ready',
+            'message': 'Send POST requests here'
+        })
     try:
         webhook_data = request.get_json()
         event_type = webhook_data.get('data', {}).get('event_type')
